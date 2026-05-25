@@ -78,7 +78,7 @@ class CaptureRepository(private val context: Context) {
         val authority = "${context.packageName}.fileprovider"
         val uri = FileProvider.getUriForFile(context, authority, capture.file)
         return Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
+            type = "application/octet-stream"
             putExtra(Intent.EXTRA_STREAM, uri)
             putExtra(Intent.EXTRA_SUBJECT, capture.displayName)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
