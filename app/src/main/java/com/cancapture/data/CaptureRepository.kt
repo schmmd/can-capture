@@ -77,10 +77,16 @@ class CaptureRepository(private val context: Context) {
     fun buildShareIntent(capture: Capture): Intent {
         val authority = "${context.packageName}.fileprovider"
         val uri = FileProvider.getUriForFile(context, authority, capture.file)
+        val shareName = if (capture.displayName.endsWith(".asc", ignoreCase = true)) {
+            capture.displayName
+        } else {
+            "${capture.displayName}.asc"
+        }
         return Intent(Intent.ACTION_SEND).apply {
-            type = "application/octet-stream"
+            type = "text/plain"
             putExtra(Intent.EXTRA_STREAM, uri)
-            putExtra(Intent.EXTRA_SUBJECT, capture.displayName)
+            putExtra(Intent.EXTRA_SUBJECT, shareName)
+            putExtra(Intent.EXTRA_TITLE, shareName)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
     }
