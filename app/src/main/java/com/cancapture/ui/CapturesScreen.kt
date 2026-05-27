@@ -1,6 +1,7 @@
 package com.cancapture.ui
 
 import android.content.Intent
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,21 +16,19 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -45,7 +44,6 @@ import java.util.Locale
 fun CapturesScreen(viewModel: CapturesViewModel = viewModel(factory = CapturesViewModel.Factory)) {
     val context = LocalContext.current
     val captures by viewModel.captures.collectAsState()
-    var pendingDelete by remember { mutableStateOf<Capture?>(null) }
 
     // Refresh when screen becomes visible.
     LaunchedEffect(Unit) { viewModel.refresh() }
@@ -68,41 +66,68 @@ fun CapturesScreen(viewModel: CapturesViewModel = viewModel(factory = CapturesVi
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(captures, key = { it.file.absolutePath }) { capture ->
-                    CaptureRow(
+                    SwipeToDeleteRow(
                         capture = capture,
                         onShare = {
                             context.startActivity(
                                 Intent.createChooser(viewModel.shareIntent(capture), "Share capture")
                             )
                         },
-                        onDelete = { pendingDelete = capture }
+                        onDelete = { viewModel.delete(capture) }
                     )
                 }
                 item { Spacer(Modifier.height(24.dp)) }
             }
         }
     }
+}
 
-    pendingDelete?.let { cap ->
-        AlertDialog(
-            onDismissRequest = { pendingDelete = null },
-            title = { Text("Delete capture?") },
-            text = { Text("\"${cap.displayName}\" will be removed permanently.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    viewModel.delete(cap)
-                    pendingDelete = null
-                }) { Text("Delete") }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingDelete = null }) { Text("Cancel") }
+@Composable
+private fun SwipeToDeleteRow(capture: Capture, onShare: () -> Unit, onDelete: () -> Unit) {
+    val dismissState = rememberSwipeToDismissBoxState(
+        confirmValueChange = { target ->
+            if (target == SwipeToDismissBoxValue.EndToStart) {
+                onDelete()
+                true
+            } else {
+                false
             }
-        )
+        }
+    )
+    SwipeToDismissBox(
+        state = dismissState,
+        backgroundContent = { SwipeDeleteBackground(dismissState.dismissDirection) },
+        enableDismissFromStartToEnd = false,
+        content = { CaptureRow(capture = capture, onShare = onShare) }
+    )
+}
+
+@Composable
+private fun SwipeDeleteBackground(direction: SwipeToDismissBoxValue) {
+    val alignment = when (direction) {
+        SwipeToDismissBoxValue.EndToStart -> Alignment.CenterEnd
+        SwipeToDismissBoxValue.StartToEnd -> Alignment.CenterStart
+        SwipeToDismissBoxValue.Settled -> Alignment.Center
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.errorContainer)
+            .padding(horizontal = 20.dp),
+        contentAlignment = alignment
+    ) {
+        if (direction != SwipeToDismissBoxValue.Settled) {
+            Icon(
+                Icons.Filled.Delete,
+                contentDescription = "Delete",
+                tint = MaterialTheme.colorScheme.onErrorContainer
+            )
+        }
     }
 }
 
 @Composable
-private fun CaptureRow(capture: Capture, onShare: () -> Unit, onDelete: () -> Unit) {
+private fun CaptureRow(capture: Capture, onShare: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
@@ -121,9 +146,6 @@ private fun CaptureRow(capture: Capture, onShare: () -> Unit, onDelete: () -> Un
             }
             IconButton(onClick = onShare) {
                 Icon(Icons.Filled.Share, contentDescription = "Share")
-            }
-            IconButton(onClick = onDelete) {
-                Icon(Icons.Filled.Delete, contentDescription = "Delete")
             }
         }
     }
