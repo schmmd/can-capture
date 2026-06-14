@@ -15,28 +15,50 @@ val Context.settingsDataStore: DataStore<Preferences> by preferencesDataStore(na
 data class ConnectionSettings(
     val host: String,
     val port: Int,
-    val bus: String
-)
+    val channels: List<ChannelConfig>,
+) {
+    val buses: List<String> get() = channels.map { it.bus }
+}
 
 class SettingsRepository(private val dataStore: DataStore<Preferences>) {
     private val keyHost = stringPreferencesKey("host")
     private val keyPort = intPreferencesKey("port")
     private val keyBus = stringPreferencesKey("bus")
+    private val keyBuses = stringPreferencesKey("buses")
+    private val keyChannelsJson = stringPreferencesKey("channels_json")
 
     val settings: Flow<ConnectionSettings> = dataStore.data.map { prefs ->
+        val channels = prefs[keyChannelsJson]
+            ?.let { ChannelConfigJson.decodeChannels(it) }
+            ?.takeIf { it.isNotEmpty() }
+            ?: legacyChannels(prefs)
         ConnectionSettings(
             host = prefs[keyHost] ?: DEFAULT_HOST,
             port = prefs[keyPort] ?: DEFAULT_PORT,
-            bus = prefs[keyBus] ?: DEFAULT_BUS
+            channels = channels,
         )
     }
 
-    suspend fun update(host: String, port: Int, bus: String) {
+    suspend fun update(host: String, port: Int, channels: List<ChannelConfig>) {
         dataStore.edit { prefs ->
             prefs[keyHost] = host
             prefs[keyPort] = port
-            prefs[keyBus] = bus
+            prefs[keyChannelsJson] = ChannelConfigJson.encodeChannels(channels)
+            prefs.remove(keyBuses)
+            prefs.remove(keyBus)
         }
+    }
+
+    private fun legacyChannels(prefs: Preferences): List<ChannelConfig> {
+        val fromBuses = prefs[keyBuses]
+            ?.split(',')
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            ?.takeIf { it.isNotEmpty() }
+        if (fromBuses != null) return fromBuses.map { ChannelConfig.Passive(it) }
+        val singleBus = prefs[keyBus]?.takeIf { it.isNotBlank() }
+        if (singleBus != null) return listOf(ChannelConfig.Passive(singleBus))
+        return listOf(ChannelConfig.Passive(DEFAULT_BUS))
     }
 
     companion object {

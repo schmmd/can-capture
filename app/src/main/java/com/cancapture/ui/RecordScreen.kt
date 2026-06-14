@@ -3,7 +3,7 @@ package com.cancapture.ui
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -35,6 +35,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.cancapture.viewmodel.BusMode
+import com.cancapture.viewmodel.BusPhase
+import com.cancapture.viewmodel.BusStatus
 import com.cancapture.viewmodel.RecordUiState
 import com.cancapture.viewmodel.RecordViewModel
 
@@ -43,7 +46,7 @@ fun RecordScreen(viewModel: RecordViewModel = viewModel(factory = RecordViewMode
     val state by viewModel.state.collectAsState()
 
     val view = LocalView.current
-    val keepScreenOn = state is RecordUiState.Recording || state is RecordUiState.Connecting
+    val keepScreenOn = state is RecordUiState.Recording
     DisposableEffect(keepScreenOn) {
         view.keepScreenOn = keepScreenOn
         onDispose { view.keepScreenOn = false }
@@ -79,7 +82,6 @@ fun RecordScreen(viewModel: RecordViewModel = viewModel(factory = RecordViewMode
                 softWrap = false,
                 color = when (state) {
                     is RecordUiState.Recording -> MaterialTheme.colorScheme.primary
-                    is RecordUiState.Connecting -> MaterialTheme.colorScheme.secondary
                     else -> MaterialTheme.colorScheme.onSurface
                 }
             )
@@ -89,13 +91,14 @@ fun RecordScreen(viewModel: RecordViewModel = viewModel(factory = RecordViewMode
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Status: ${statusLabel(state)}", style = MaterialTheme.typography.titleMedium)
-                val frames = (state as? RecordUiState.Recording)?.frameCount ?: 0
-                Text("Frames: $frames")
-                val lastId = (state as? RecordUiState.Recording)?.lastFrameId
-                if (!lastId.isNullOrEmpty()) {
-                    Text("Last ID: 0x$lastId", fontFamily = FontFamily.Monospace)
+                val recording = state as? RecordUiState.Recording
+                if (recording != null) {
+                    Text("Total frames: ${recording.frameCount}")
+                    recording.buses.forEachIndexed { index, bus ->
+                        BusRow(channel = index + 1, bus = bus)
+                    }
                 }
             }
         }
@@ -112,14 +115,6 @@ fun RecordScreen(viewModel: RecordViewModel = viewModel(factory = RecordViewMode
                 ) {
                     Text("Start", fontSize = 18.sp, fontWeight = FontWeight.Medium)
                 }
-            }
-            is RecordUiState.Connecting -> {
-                Button(
-                    onClick = { viewModel.stop() },
-                    modifier = Modifier.fillMaxWidth().height(56.dp),
-                    shape = CircleShape,
-                    enabled = false
-                ) { Text("Connecting…") }
             }
             is RecordUiState.Recording -> {
                 Button(
@@ -182,6 +177,82 @@ fun RecordScreen(viewModel: RecordViewModel = viewModel(factory = RecordViewMode
     }
 }
 
+@Composable
+private fun BusRow(channel: Int, bus: BusStatus) {
+    val phaseColor = when (bus.phase) {
+        BusPhase.Active -> MaterialTheme.colorScheme.primary
+        BusPhase.Listening -> MaterialTheme.colorScheme.secondary
+        BusPhase.Connecting -> MaterialTheme.colorScheme.secondary
+        BusPhase.Disconnected -> MaterialTheme.colorScheme.onSurfaceVariant
+        BusPhase.Errored -> Color(0xFFD32F2F)
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            text = "ch$channel ${bus.name}",
+            style = MaterialTheme.typography.bodyMedium,
+            fontFamily = FontFamily.Monospace,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            text = busPhaseLabel(bus),
+            style = MaterialTheme.typography.bodySmall,
+            color = phaseColor
+        )
+        Text(
+            text = "${bus.frameCount}",
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+    val lastId = bus.lastFrameId
+    if (lastId != null) {
+        Text(
+            text = "    last: 0x$lastId",
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+    if (bus.mode == BusMode.UdsPoll) {
+        Text(
+            text = "    polls: ok=${bus.polls} err=${bus.pollErrors}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.fillMaxWidth()
+        )
+        val pollErr = bus.lastPollError
+        if (pollErr != null) {
+            Text(
+                text = "    last poll error: $pollErr",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFFD32F2F),
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    }
+    val errMsg = bus.errorMessage
+    if (errMsg != null && bus.phase == BusPhase.Errored) {
+        Text(
+            text = "    $errMsg",
+            style = MaterialTheme.typography.bodySmall,
+            color = phaseColor,
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+private fun busPhaseLabel(bus: BusStatus): String = when (bus.phase) {
+    BusPhase.Connecting -> "Connecting…"
+    BusPhase.Listening -> "Listening (no frames)"
+    BusPhase.Active -> "Active"
+    BusPhase.Disconnected -> "Disconnected"
+    BusPhase.Errored -> "Errored"
+}
+
 private fun stateElapsed(state: RecordUiState): Long = when (state) {
     is RecordUiState.Recording -> state.elapsedMs
     is RecordUiState.PendingSave -> state.durationMs
@@ -190,8 +261,15 @@ private fun stateElapsed(state: RecordUiState): Long = when (state) {
 
 private fun statusLabel(state: RecordUiState): String = when (state) {
     is RecordUiState.Idle -> "Idle"
-    is RecordUiState.Connecting -> "Connecting to ${state.host}:${state.port} (${state.bus})"
-    is RecordUiState.Recording -> "Recording"
+    is RecordUiState.Recording -> {
+        val open = state.buses.count { it.phase == BusPhase.Active || it.phase == BusPhase.Listening }
+        val total = state.buses.size
+        when {
+            state.buses.any { it.phase == BusPhase.Connecting } -> "Recording ($open / $total open)"
+            open == total -> "Recording"
+            else -> "Recording ($open / $total open)"
+        }
+    }
     is RecordUiState.PendingSave -> "Stopped — name to save"
     is RecordUiState.Error -> "Error"
 }

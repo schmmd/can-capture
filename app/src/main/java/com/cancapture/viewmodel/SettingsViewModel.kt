@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cancapture.App
+import com.cancapture.data.ChannelConfig
 import com.cancapture.data.ConnectionSettings
 import com.cancapture.data.SettingsRepository
 import kotlinx.coroutines.flow.SharingStarted
@@ -25,12 +26,12 @@ class SettingsViewModel(
         ConnectionSettings(
             host = SettingsRepository.DEFAULT_HOST,
             port = SettingsRepository.DEFAULT_PORT,
-            bus = SettingsRepository.DEFAULT_BUS
+            channels = listOf(ChannelConfig.Passive(SettingsRepository.DEFAULT_BUS))
         )
     )
 
-    fun save(host: String, port: Int, bus: String) {
-        viewModelScope.launch { repo.update(host, port, bus) }
+    fun save(host: String, port: Int, channels: List<ChannelConfig>) {
+        viewModelScope.launch { repo.update(host, port, channels) }
     }
 
     companion object {

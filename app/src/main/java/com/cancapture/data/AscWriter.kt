@@ -8,8 +8,9 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /**
- * Writes Vector ASCII (.asc) format. Single channel (1). Timestamps are relative
- * to the first frame received (Start of measurement = 0.000000).
+ * Writes Vector ASCII (.asc) format. The channel column is set per-frame from
+ * [CanFrame.channel] (1-based). Timestamps are relative to the first frame
+ * received on any channel (Start of measurement = 0.000000).
  */
 class AscWriter(
     private val writer: BufferedWriter,
@@ -57,9 +58,10 @@ class AscWriter(
         }
 
         val kind = if (frame.rtr) 'r' else 'd'
-        val line = "%11.6f 1  %-15s Rx   %c %d %s\n".format(
+        val line = "%11.6f %d  %-15s Rx   %c %d %s\n".format(
             Locale.US,
             relTime,
+            frame.channel,
             idStr,
             kind,
             dlc,

@@ -8,7 +8,8 @@ data class CanFrame(
     val extended: Boolean,
     val rtr: Boolean,
     val timestamp: Double,
-    val data: ByteArray
+    val data: ByteArray,
+    val channel: Int = 1
 )
 
 data class Capture(
