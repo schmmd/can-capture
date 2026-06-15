@@ -70,7 +70,6 @@ class UdsPoller(
         var nextT = System.currentTimeMillis()
         while (true) {
             currentCoroutineContext().ensureActive()
-            var sweepErr = false
             for (entry in entries) {
                 currentCoroutineContext().ensureActive()
                 try {
@@ -80,11 +79,15 @@ class UdsPoller(
                     // ECU answered (with an NRC) — that still counts.
                     polls++
                 } catch (e: IsoTpException) {
+                    // Transport timeout — typically a flow-control frame that
+                    // reached the ECU after its N_Bs deadline, so it abandoned
+                    // the segmented response and the consecutive frames never
+                    // came. Skip just this DID and keep polling the rest of the
+                    // sweep: one late response must not abandon the other ~30
+                    // requests. The ECU recovers by the next request, and this
+                    // DID is retried on the next sweep.
                     errors++
                     lastError = e.message
-                    sweepErr = true
-                    onStats(UdsPollStats(polls, errors, lastError))
-                    break
                 }
                 onStats(UdsPollStats(polls, errors, lastError))
             }
@@ -95,7 +98,6 @@ class UdsPoller(
             } else {
                 nextT = System.currentTimeMillis()
             }
-            if (sweepErr) delay(500)
         }
     }
 }

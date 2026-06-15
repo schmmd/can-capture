@@ -122,8 +122,14 @@ class SocketcandSession internal constructor(
 
     suspend fun send(canId: Long, data: ByteArray, extended: Boolean = false) {
         require(data.size in 0..8) { "Classical CAN frame max 8 bytes" }
-        val idMasked = if (extended) (canId and 0x1FFFFFFFL) or 0x80000000L else canId and 0x7FFL
-        val idStr = java.lang.Long.toHexString(idMasked).uppercase()
+        // socketcand encodes frame width in the ID field itself: a standard ID is
+        // exactly 3 hex digits, an extended ID is 8 digits of the raw 29-bit value
+        // with no flag bit. That's how python-can's parser tells them apart
+        // (is_ext = len(id) != 3), so zero-pad to the right width and never set
+        // the EFF bit — emitting e.g. "040" (not "40") or "98DAF140" would be
+        // misread as the wrong frame type by a standards-compliant server.
+        val idStr = if (extended) "%08X".format(canId and 0x1FFFFFFFL)
+        else "%03X".format(canId and 0x7FFL)
         val msg = buildString(32 + data.size * 3) {
             append("< send ")
             append(idStr)

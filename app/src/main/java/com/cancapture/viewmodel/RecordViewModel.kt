@@ -129,7 +129,11 @@ class RecordViewModel(
                 supervisorScope {
                     configs.forEachIndexed { index, config ->
                         val ch = index + 1
-                        launch {
+                        // Run each channel off the main thread: viewModelScope is
+                        // Dispatchers.Main.immediate, and letting a busy bus's
+                        // per-frame work run there starves the other channel's
+                        // ISO-TP reassembly, overrunning multi-frame poll timeouts.
+                        launch(Dispatchers.Default) {
                             runChannel(
                                 config = config,
                                 index = index,
@@ -222,10 +226,13 @@ class RecordViewModel(
 
                     try {
                         session.frames.collect { frame ->
+                            // Feed ISO-TP reassembly first (a non-blocking offer)
+                            // so the response — and the flow-control frame we owe
+                            // the ECU — never waits behind logging I/O.
+                            isoTp?.onFrame(frame)
                             withContext(Dispatchers.IO) {
                                 writerMutex.withLock { ascWriter.writeFrame(frame) }
                             }
-                            isoTp?.onFrame(frame)
                             val t0 = origin(frame.timestamp)
                             val relMs = ((frame.timestamp - t0) * 1000.0).toLong().coerceAtLeast(0L)
                             val idStr = if (frame.extended) "%X".format(frame.id) + "x"
