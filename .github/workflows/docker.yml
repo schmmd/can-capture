@@ -1,0 +1,23 @@
+name: Docker build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          outputs: type=local,dest=out
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-debug.apk
+          path: out/app-debug.apk
