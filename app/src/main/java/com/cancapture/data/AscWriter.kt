@@ -35,7 +35,8 @@ class AscWriter(
         writer.flush()
     }
 
-    fun writeFrame(frame: CanFrame) {
+    /** Writes one frame and returns its timestamp relative to the first frame, in seconds. */
+    fun writeFrame(frame: CanFrame): Double {
         val t0 = firstFrameTs ?: frame.timestamp.also { firstFrameTs = it }
         val relTime = (frame.timestamp - t0).coerceAtLeast(0.0)
 
@@ -44,18 +45,7 @@ class AscWriter(
             if (frame.extended) append('x')
         }
         val dlc = frame.data.size
-        val dataStr = if (dlc == 0) {
-            ""
-        } else {
-            buildString(dlc * 3) {
-                for ((i, b) in frame.data.withIndex()) {
-                    if (i > 0) append(' ')
-                    val v = b.toInt() and 0xFF
-                    append(HEX[v ushr 4])
-                    append(HEX[v and 0x0F])
-                }
-            }
-        }
+        val dataStr = frame.data.toHex(" ")
 
         val kind = if (frame.rtr) 'r' else 'd'
         val line = "%11.6f %d  %-15s Rx   %c %d %s\n".format(
@@ -68,6 +58,7 @@ class AscWriter(
             dataStr
         )
         writer.write(line)
+        return relTime
     }
 
     override fun close() {
@@ -79,9 +70,5 @@ class AscWriter(
         } finally {
             writer.close()
         }
-    }
-
-    private companion object {
-        val HEX = "0123456789ABCDEF".toCharArray()
     }
 }

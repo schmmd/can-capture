@@ -23,15 +23,13 @@ data class ConnectionSettings(
 class SettingsRepository(private val dataStore: DataStore<Preferences>) {
     private val keyHost = stringPreferencesKey("host")
     private val keyPort = intPreferencesKey("port")
-    private val keyBus = stringPreferencesKey("bus")
-    private val keyBuses = stringPreferencesKey("buses")
     private val keyChannelsJson = stringPreferencesKey("channels_json")
 
     val settings: Flow<ConnectionSettings> = dataStore.data.map { prefs ->
         val channels = prefs[keyChannelsJson]
             ?.let { ChannelConfigJson.decodeChannels(it) }
             ?.takeIf { it.isNotEmpty() }
-            ?: legacyChannels(prefs)
+            ?: listOf(ChannelConfig.Passive(DEFAULT_BUS))
         ConnectionSettings(
             host = prefs[keyHost] ?: DEFAULT_HOST,
             port = prefs[keyPort] ?: DEFAULT_PORT,
@@ -44,22 +42,9 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
             prefs[keyHost] = host
             prefs[keyPort] = port
             prefs[keyChannelsJson] = ChannelConfigJson.encodeChannels(channels)
-            prefs.remove(keyBuses)
-            prefs.remove(keyBus)
         }
     }
 
-    private fun legacyChannels(prefs: Preferences): List<ChannelConfig> {
-        val fromBuses = prefs[keyBuses]
-            ?.split(',')
-            ?.map { it.trim() }
-            ?.filter { it.isNotEmpty() }
-            ?.takeIf { it.isNotEmpty() }
-        if (fromBuses != null) return fromBuses.map { ChannelConfig.Passive(it) }
-        val singleBus = prefs[keyBus]?.takeIf { it.isNotBlank() }
-        if (singleBus != null) return listOf(ChannelConfig.Passive(singleBus))
-        return listOf(ChannelConfig.Passive(DEFAULT_BUS))
-    }
 
     companion object {
         const val DEFAULT_HOST = "192.168.1.100"

@@ -83,8 +83,6 @@ class SocketcandClient(
             throw t
         }
     }
-
-    internal fun parseFrame(message: String): CanFrame? = parseSocketcandFrame(message)
 }
 
 /**
@@ -135,12 +133,7 @@ class SocketcandSession internal constructor(
             append(idStr)
             append(' ')
             append(data.size)
-            for (b in data) {
-                append(' ')
-                val v = b.toInt() and 0xFF
-                append(HEX[v ushr 4])
-                append(HEX[v and 0x0F])
-            }
+            if (data.isNotEmpty()) append(' ').append(data.toHex(" "))
             append(" >")
         }
         sendMutex.withLock {
@@ -154,10 +147,6 @@ class SocketcandSession internal constructor(
     override fun close() {
         readerJob.cancel()
         try { socket.close() } catch (_: Exception) {}
-    }
-
-    private companion object {
-        val HEX = "0123456789ABCDEF".toCharArray()
     }
 }
 

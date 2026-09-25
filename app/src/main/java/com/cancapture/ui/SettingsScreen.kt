@@ -37,6 +37,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.cancapture.BuildConfig
 import com.cancapture.data.ChannelConfig
 import com.cancapture.data.ChannelConfigJson
 import com.cancapture.viewmodel.SettingsViewModel
@@ -202,6 +203,12 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel(factory = SettingsVi
                 color = MaterialTheme.colorScheme.primary
             )
         }
+
+        Text(
+            "v${BuildConfig.VERSION_NAME} (${BuildConfig.GIT_SHA})",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 
     val editIndex = pollEditorFor

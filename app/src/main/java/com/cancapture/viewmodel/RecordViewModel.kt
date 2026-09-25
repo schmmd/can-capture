@@ -116,24 +116,16 @@ class RecordViewModel(
             )
 
             val writerMutex = Mutex()
-            val originMutex = Mutex()
-            var firstFrameTs: Double? = null
-
-            val origin: suspend (Double) -> Double = { ts ->
-                originMutex.withLock {
-                    firstFrameTs ?: ts.also { firstFrameTs = it }
-                }
-            }
 
             try {
                 supervisorScope {
                     configs.forEachIndexed { index, config ->
                         val ch = index + 1
-                        // Run each channel off the main thread: viewModelScope is
-                        // Dispatchers.Main.immediate, and letting a busy bus's
-                        // per-frame work run there starves the other channel's
-                        // ISO-TP reassembly, overrunning multi-frame poll timeouts.
-                        launch(Dispatchers.Default) {
+                        // Run each channel on IO: viewModelScope is
+                        // Dispatchers.Main.immediate, and the per-frame file
+                        // write blocks, so keep it off Main and off the
+                        // small Default pool.
+                        launch(Dispatchers.IO) {
                             runChannel(
                                 config = config,
                                 index = index,
@@ -142,7 +134,6 @@ class RecordViewModel(
                                 port = settings.port,
                                 ascWriter = ascWriter,
                                 writerMutex = writerMutex,
-                                origin = origin,
                             )
                         }
                     }
@@ -180,7 +171,6 @@ class RecordViewModel(
         port: Int,
         ascWriter: AscWriter,
         writerMutex: Mutex,
-        origin: suspend (Double) -> Double,
     ) {
         val client = SocketcandClient(host, port, config.bus, channelNum)
         try {
@@ -194,7 +184,7 @@ class RecordViewModel(
 
                     val isoTp: IsoTp? = if (config is ChannelConfig.UdsPoll) {
                         IsoTp(
-                            session = session,
+                            send = session::send,
                             txId = config.txId,
                             rxId = config.rxId,
                             extended = config.extended,
@@ -224,30 +214,38 @@ class RecordViewModel(
                         }
                     } else null
 
+                    // UI state is published at most every UI_PUBLISH_MS; a busy
+                    // bus is thousands of frames/s and a state copy per frame
+                    // would starve the writer.
+                    var frames = 0
+                    var lastId: String? = null
+                    var elapsedMs = 0L
+                    var lastPublish = 0L
+                    fun publish() {
+                        updateBus(index) { cur ->
+                            cur.copy(phase = BusPhase.Active, frameCount = frames, lastFrameId = lastId)
+                        }
+                        advanceElapsed(elapsedMs)
+                    }
                     try {
                         session.frames.collect { frame ->
                             // Feed ISO-TP reassembly first (a non-blocking offer)
                             // so the response — and the flow-control frame we owe
                             // the ECU — never waits behind logging I/O.
                             isoTp?.onFrame(frame)
-                            withContext(Dispatchers.IO) {
-                                writerMutex.withLock { ascWriter.writeFrame(frame) }
+                            val rel = writerMutex.withLock { ascWriter.writeFrame(frame) }
+                            frames++
+                            lastId = "%X".format(frame.id) + if (frame.extended) "x" else ""
+                            elapsedMs = maxOf(elapsedMs, (rel * 1000.0).toLong())
+                            val now = System.currentTimeMillis()
+                            if (now - lastPublish >= UI_PUBLISH_MS) {
+                                publish()
+                                lastPublish = now
                             }
-                            val t0 = origin(frame.timestamp)
-                            val relMs = ((frame.timestamp - t0) * 1000.0).toLong().coerceAtLeast(0L)
-                            val idStr = if (frame.extended) "%X".format(frame.id) + "x"
-                            else "%X".format(frame.id)
-                            updateBus(index) { cur ->
-                                cur.copy(
-                                    phase = BusPhase.Active,
-                                    frameCount = cur.frameCount + 1,
-                                    lastFrameId = idStr,
-                                )
-                            }
-                            advanceElapsed(relMs)
                         }
                     } finally {
                         pollerJob?.cancel()
+                        if (frames > 0) publish()
                     }
                     updateBus(index) { cur ->
                         if (cur.phase == BusPhase.Errored) cur
@@ -291,9 +289,9 @@ class RecordViewModel(
      */
     fun stop() {
         viewModelScope.launch {
-            val cur = _state.value as? RecordUiState.Recording
             captureJob?.cancelAndJoin()
             captureJob = null
+            val cur = _state.value as? RecordUiState.Recording
             val temp = tempFile
             val w = writer
             if (temp == null || w == null || cur == null) {
@@ -340,6 +338,8 @@ class RecordViewModel(
     }
 
     companion object {
+        private const val UI_PUBLISH_MS = 100L
+
         val Factory: ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 val app = this[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY] as App

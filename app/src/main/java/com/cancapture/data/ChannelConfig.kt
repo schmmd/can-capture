@@ -108,7 +108,7 @@ object ChannelConfigJson {
         for (e in cfg.entries) {
             val p = JSONObject()
             p.put("service", "0x${"%02X".format(e.service)}")
-            p.put("data", "0x" + e.payload.joinToString("") { "%02X".format(it.toInt() and 0xFF) })
+            p.put("data", "0x" + e.payload.toHex())
             polls.put(p)
         }
         obj.put("polls", polls)

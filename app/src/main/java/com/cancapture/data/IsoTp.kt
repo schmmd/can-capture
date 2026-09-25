@@ -11,13 +11,14 @@ class IsoTpException(message: String, cause: Throwable? = null) : IOException(me
 
 /**
  * Classical CAN ISO 15765-2 (ISO-TP) request/response over a single
- * [SocketcandSession]. Supports only single-frame TX (sufficient for UDS
+ * CAN bus, transmitting through [send]. Supports only single-frame TX (sufficient for UDS
  * service requests of up to 7 bytes, which covers ReadDataByIdentifier,
  * DiagnosticSessionControl, TesterPresent, etc.). RX handles SF and
  * multi-frame (FF + flow control + CFs) with reassembly.
  */
 class IsoTp(
-    private val session: SocketcandSession,
+    /** Transmit one classical CAN frame: (canId, data, extended). Usually [SocketcandSession.send]. */
+    private val send: suspend (Long, ByteArray, Boolean) -> Unit,
     private val txId: Long,
     private val rxId: Long,
     private val extended: Boolean = false,
@@ -26,7 +27,7 @@ class IsoTp(
     private val paddingByte: Int = 0x00,
     private val timeoutMs: Long = 1000,
 ) {
-    private val rxChannel = Channel<CanFrame>(capacity = 32)
+    private val rxChannel = Channel<CanFrame>(capacity = Channel.UNLIMITED)
     private val requestMutex = Mutex()
 
     /** Called by the upstream RX collector for every frame. */
@@ -50,11 +51,18 @@ class IsoTp(
         while (rxChannel.tryReceive().isSuccess) {}
 
         sendSingleFrame(payload)
-        return try {
-            withTimeout(timeoutMs) { collectResponse() }
-        } catch (e: TimeoutCancellationException) {
-            throw IsoTpException("Timed out waiting for response to ${payload.toHex()}", e)
-        }
+        return awaitResponse(timeoutMs)
+    }
+
+    /**
+     * Wait for another reassembled response without sending anything. Used
+     * after a UDS ResponsePending (NRC 0x78), where the ECU will send the
+     * final response on its own and re-sending the request would be wrong.
+     */
+    suspend fun awaitResponse(timeoutMs: Long = this.timeoutMs): ByteArray = try {
+        withTimeout(timeoutMs) { collectResponse() }
+    } catch (e: TimeoutCancellationException) {
+        throw IsoTpException("Timed out waiting for ISO-TP response", e)
     }
 
     private suspend fun sendSingleFrame(payload: ByteArray) {
@@ -62,7 +70,7 @@ class IsoTp(
         val frame = ByteArray(8) { pad }
         frame[0] = payload.size.toByte()
         for (i in payload.indices) frame[i + 1] = payload[i]
-        session.send(txId, frame, extended)
+        send(txId, frame, extended)
     }
 
     private suspend fun sendFlowControl() {
@@ -71,7 +79,7 @@ class IsoTp(
         frame[0] = 0x30
         frame[1] = (blockSize and 0xFF).toByte()
         frame[2] = (stMinMs and 0xFF).toByte()
-        session.send(txId, frame, extended)
+        send(txId, frame, extended)
     }
 
     private suspend fun collectResponse(): ByteArray {
@@ -127,6 +135,3 @@ class IsoTp(
         }
     }
 }
-
-private fun ByteArray.toHex(): String =
-    joinToString(" ") { "%02X".format(it.toInt() and 0xFF) }
