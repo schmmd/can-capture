@@ -3,6 +3,11 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val gitSha: String = providers.exec {
+    commandLine("git", "rev-parse", "--short=7", "HEAD")
+    isIgnoreExitValue = true
+}.standardOutput.asText.map { it.trim().ifBlank { "unknown" } }.get()
+
 android {
     namespace = "com.cancapture"
     compileSdk = 34
@@ -13,6 +18,8 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
+
+        buildConfigField("String", "GIT_SHA", "\"$gitSha\"")
     }
 
     buildTypes {
@@ -32,6 +39,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     packaging {
@@ -59,12 +67,11 @@ dependencies {
 
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
-    implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.material:material-icons-extended")
 
     implementation("androidx.navigation:navigation-compose:2.8.2")
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 
-    debugImplementation("androidx.compose.ui:ui-tooling")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }

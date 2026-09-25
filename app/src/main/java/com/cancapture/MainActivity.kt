@@ -3,12 +3,16 @@ package com.cancapture
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.FiberManualRecord
-import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
@@ -16,6 +20,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -63,14 +68,13 @@ private fun AppRoot() {
                             }
                         },
                         icon = {
-                            Icon(
-                                imageVector = when (dest) {
-                                    Dest.Record -> Icons.Filled.FiberManualRecord
-                                    Dest.Captures -> Icons.Filled.Folder
-                                    Dest.Settings -> Icons.Filled.Settings
-                                },
-                                contentDescription = dest.label
-                            )
+                            when (dest) {
+                                Dest.Record -> Box(
+                                    Modifier.size(16.dp).background(LocalContentColor.current, CircleShape)
+                                )
+                                Dest.Captures -> Icon(Icons.Filled.List, contentDescription = dest.label)
+                                Dest.Settings -> Icon(Icons.Filled.Settings, contentDescription = dest.label)
+                            }
                         },
                         label = { Text(dest.label) }
                     )

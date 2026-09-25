@@ -1,0 +1,27 @@
+name: Release APK
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      # ponytail: debug-signed so it installs without secrets; CI's debug key changes per run,
+      # so updating means uninstall first. Add a release keystore via secrets if that bites.
+      - run: ./gradlew assembleDebug
+      - run: |
+          cp app/build/outputs/apk/debug/app-debug.apk "can-capture-${{ github.event.release.tag_name }}.apk"
+          gh release upload "${{ github.event.release.tag_name }}" can-capture-*.apk --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

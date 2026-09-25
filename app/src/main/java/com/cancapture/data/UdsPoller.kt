@@ -22,13 +22,22 @@ class UdsClient(private val isoTp: IsoTp) {
             payload.copyInto(it, 1)
         }
         val positive = ((service or 0x40) and 0xFF).toByte()
+        var resp = isoTp.request(req)
+        var pending = 0
         while (true) {
-            val resp = isoTp.request(req)
             if (resp.isEmpty()) throw UdsException("Empty UDS response")
             if (resp[0] == 0x7F.toByte()) {
                 if (resp.size < 3) throw UdsException("Malformed negative response")
                 val nrc = resp[2].toInt() and 0xFF
-                if (nrc == 0x78) continue  // response pending, keep waiting
+                if (nrc == 0x78) {
+                    // ResponsePending: the ECU will answer on its own; do NOT
+                    // re-send. Wait with the enhanced P2* timeout, bounded.
+                    if (++pending > MAX_PENDING) {
+                        throw UdsException("Still pending after $MAX_PENDING 0x78 responses", nrc = nrc)
+                    }
+                    resp = isoTp.awaitResponse(P2_STAR_MS)
+                    continue
+                }
                 throw UdsException(
                     "NRC 0x${"%02X".format(nrc)} for service 0x${"%02X".format(service)}",
                     nrc = nrc,
@@ -41,6 +50,12 @@ class UdsClient(private val isoTp: IsoTp) {
             }
             return resp.copyOfRange(1, resp.size)
         }
+    }
+
+    private companion object {
+        /** ISO 14229 default P2*server; real ECUs vary, tune if a BMS needs longer. */
+        const val P2_STAR_MS = 5000L
+        const val MAX_PENDING = 10
     }
 }
 
