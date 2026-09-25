@@ -1,0 +1,7 @@
+.git
+.claude
+.gradle
+.kotlin
+.idea
+**/build
+*.apk
