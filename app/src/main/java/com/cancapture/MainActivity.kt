@@ -9,7 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
@@ -72,7 +72,7 @@ private fun AppRoot() {
                                 Dest.Record -> Box(
                                     Modifier.size(16.dp).background(LocalContentColor.current, CircleShape)
                                 )
-                                Dest.Captures -> Icon(Icons.Filled.List, contentDescription = dest.label)
+                                Dest.Captures -> Icon(Icons.AutoMirrored.Filled.List, contentDescription = dest.label)
                                 Dest.Settings -> Icon(Icons.Filled.Settings, contentDescription = dest.label)
                             }
                         },
