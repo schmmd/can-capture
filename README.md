@@ -65,9 +65,9 @@ relative to the first frame. The format is read by SavvyCAN, CANalyzer/CANoe,
 
 ## Limitations
 
-- Recording must stay in the foreground. Backgrounding the app may eventually
-  cause Android to kill the process and end the capture. (Adding a foreground
-  service would lift this.)
+- Recording runs in a foreground service, so backgrounding the app is fine.
+  Android 14+ caps this kind of service at 6 hours; at the limit the capture
+  is stopped cleanly and offered for saving.
 - Cleartext TCP only (matches socketcand). The manifest enables
   `usesCleartextTraffic`; if you put socketcand behind TLS you'll need to adapt.
 - Extended (29-bit) IDs, RTR frames, and standard data frames are supported.

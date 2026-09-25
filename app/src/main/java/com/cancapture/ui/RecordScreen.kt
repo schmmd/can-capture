@@ -1,5 +1,10 @@
 package com.cancapture.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,21 +34,35 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.cancapture.viewmodel.BusMode
-import com.cancapture.viewmodel.BusPhase
-import com.cancapture.viewmodel.BusStatus
-import com.cancapture.viewmodel.RecordUiState
+import com.cancapture.data.BusMode
+import com.cancapture.data.BusPhase
+import com.cancapture.data.BusStatus
+import com.cancapture.data.RecordUiState
 import com.cancapture.viewmodel.RecordViewModel
 
 @Composable
 fun RecordScreen(viewModel: RecordViewModel = viewModel(factory = RecordViewModel.Factory)) {
     val state by viewModel.state.collectAsState()
+
+    // The foreground service runs without this, but on Android 13+ its
+    // notification is hidden unless granted. Start either way.
+    val context = LocalContext.current
+    val askNotifications = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { viewModel.start() }
+    val startCapture = {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+        else viewModel.start()
+    }
 
     val view = LocalView.current
     val keepScreenOn = state is RecordUiState.Recording
@@ -108,7 +127,7 @@ fun RecordScreen(viewModel: RecordViewModel = viewModel(factory = RecordViewMode
         when (state) {
             is RecordUiState.Idle, is RecordUiState.Error -> {
                 Button(
-                    onClick = { viewModel.start() },
+                    onClick = startCapture,
                     modifier = Modifier.fillMaxWidth().height(56.dp),
                     shape = CircleShape,
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
