@@ -1,349 +1,46 @@
 package com.cancapture.viewmodel
 
 import android.app.Application
+import android.content.Intent
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
-import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cancapture.App
-import com.cancapture.data.AscWriter
-import com.cancapture.data.CaptureRepository
-import com.cancapture.data.ChannelConfig
-import com.cancapture.data.IsoTp
-import com.cancapture.data.SettingsRepository
-import com.cancapture.data.SocketcandClient
-import com.cancapture.data.UdsClient
-import com.cancapture.data.UdsPoller
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.flow.MutableStateFlow
+import com.cancapture.CaptureService
+import com.cancapture.data.CaptureEngine
+import com.cancapture.data.RecordUiState
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.supervisorScope
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
-import java.io.BufferedWriter
-import java.io.File
-import java.io.OutputStreamWriter
-import java.time.Instant
 
-enum class BusPhase { Connecting, Listening, Active, Disconnected, Errored }
-enum class BusMode { Passive, UdsPoll }
-
-data class BusStatus(
-    val name: String,
-    val phase: BusPhase,
-    val mode: BusMode = BusMode.Passive,
-    val frameCount: Int = 0,
-    val lastFrameId: String? = null,
-    val errorMessage: String? = null,
-    val polls: Int = 0,
-    val pollErrors: Int = 0,
-    val lastPollError: String? = null,
-)
-
-sealed interface RecordUiState {
-    data object Idle : RecordUiState
-    data class Recording(
-        val startedAtMs: Long,
-        val elapsedMs: Long,
-        val buses: List<BusStatus>,
-    ) : RecordUiState {
-        val frameCount: Int get() = buses.sumOf { it.frameCount }
-    }
-    data class PendingSave(
-        val tempFile: File,
-        val durationMs: Long,
-        val frameCount: Int,
-        val createdAt: Instant
-    ) : RecordUiState
-    data class Error(val message: String) : RecordUiState
-}
-
+/**
+ * Thin UI-facing shell over the process-wide [CaptureEngine]. Starting goes
+ * through [CaptureService] so the capture is promoted to a foreground service
+ * before any sockets open.
+ */
 class RecordViewModel(
     application: Application,
-    private val settingsRepo: SettingsRepository,
-    private val captureRepo: CaptureRepository
+    private val engine: CaptureEngine,
 ) : AndroidViewModel(application) {
 
-    private val _state = MutableStateFlow<RecordUiState>(RecordUiState.Idle)
-    val state: StateFlow<RecordUiState> = _state.asStateFlow()
-
-    private var captureJob: Job? = null
-    private var tempFile: File? = null
-    private var writer: AscWriter? = null
+    val state: StateFlow<RecordUiState> = engine.state
 
     fun start() {
-        if (_state.value is RecordUiState.Recording) return
-        captureJob?.cancel()
-        captureJob = viewModelScope.launch {
-            val settings = settingsRepo.settings.first()
-            val configs = settings.channels.filter { it.bus.isNotBlank() }
-            if (configs.isEmpty()) {
-                _state.value = RecordUiState.Error("No buses configured")
-                return@launch
-            }
-
-            val temp = captureRepo.newTempFile()
-            tempFile = temp
-            val createdAt = Instant.now()
-            val ascWriter = AscWriter(
-                BufferedWriter(OutputStreamWriter(temp.outputStream(), Charsets.US_ASCII)),
-                createdAt
-            )
-            writer = ascWriter
-            withContext(Dispatchers.IO) { ascWriter.writeHeader() }
-
-            val startedAtMs = System.currentTimeMillis()
-            _state.value = RecordUiState.Recording(
-                startedAtMs = startedAtMs,
-                elapsedMs = 0,
-                buses = configs.map {
-                    BusStatus(
-                        name = it.bus,
-                        phase = BusPhase.Connecting,
-                        mode = if (it is ChannelConfig.UdsPoll) BusMode.UdsPoll else BusMode.Passive,
-                    )
-                },
-            )
-
-            val writerMutex = Mutex()
-
-            try {
-                supervisorScope {
-                    configs.forEachIndexed { index, config ->
-                        val ch = index + 1
-                        // Run each channel on IO: viewModelScope is
-                        // Dispatchers.Main.immediate, and the per-frame file
-                        // write blocks, so keep it off Main and off the
-                        // small Default pool.
-                        launch(Dispatchers.IO) {
-                            runChannel(
-                                config = config,
-                                index = index,
-                                channelNum = ch,
-                                host = settings.host,
-                                port = settings.port,
-                                ascWriter = ascWriter,
-                                writerMutex = writerMutex,
-                            )
-                        }
-                    }
-                }
-            } catch (e: CancellationException) {
-                throw e
-            }
-
-            // All channels ended on their own.
-            runCatching { withContext(Dispatchers.IO) { ascWriter.close() } }
-            writer = null
-            val cur = _state.value as? RecordUiState.Recording ?: return@launch
-            if (cur.frameCount > 0) {
-                _state.value = RecordUiState.PendingSave(
-                    tempFile = temp,
-                    durationMs = cur.elapsedMs,
-                    frameCount = cur.frameCount,
-                    createdAt = Instant.ofEpochMilli(cur.startedAtMs)
-                )
-            } else {
-                captureRepo.discardTemp(temp)
-                tempFile = null
-                val msg = cur.buses.firstNotNullOfOrNull { it.errorMessage }
-                    ?: "Disconnected before any frames were received"
-                _state.value = RecordUiState.Error(msg)
-            }
-        }
+        if (state.value is RecordUiState.Recording) return
+        val app = getApplication<Application>()
+        ContextCompat.startForegroundService(app, Intent(app, CaptureService::class.java))
     }
 
-    private suspend fun runChannel(
-        config: ChannelConfig,
-        index: Int,
-        channelNum: Int,
-        host: String,
-        port: Int,
-        ascWriter: AscWriter,
-        writerMutex: Mutex,
-    ) {
-        val client = SocketcandClient(host, port, config.bus, channelNum)
-        try {
-            coroutineScope {
-                val session = client.connect(this)
-                try {
-                    updateBus(index) { cur ->
-                        if (cur.phase == BusPhase.Connecting) cur.copy(phase = BusPhase.Listening)
-                        else cur
-                    }
-
-                    val isoTp: IsoTp? = if (config is ChannelConfig.UdsPoll) {
-                        IsoTp(
-                            send = session::send,
-                            txId = config.txId,
-                            rxId = config.rxId,
-                            extended = config.extended,
-                            blockSize = config.blockSize,
-                            stMinMs = config.stMinMs,
-                            paddingByte = config.paddingByte,
-                            timeoutMs = config.timeoutMs.toLong(),
-                        )
-                    } else null
-
-                    val pollerJob: Job? = if (isoTp != null && config is ChannelConfig.UdsPoll) {
-                        val poller = UdsPoller(
-                            uds = UdsClient(isoTp),
-                            entries = config.entries,
-                            periodMs = config.periodMs,
-                        )
-                        launch {
-                            poller.run { stats ->
-                                updateBus(index) { cur ->
-                                    cur.copy(
-                                        polls = stats.polls,
-                                        pollErrors = stats.errors,
-                                        lastPollError = stats.lastError,
-                                    )
-                                }
-                            }
-                        }
-                    } else null
-
-                    // UI state is published at most every UI_PUBLISH_MS; a busy
-                    // bus is thousands of frames/s and a state copy per frame
-                    // would starve the writer.
-                    var frames = 0
-                    var lastId: String? = null
-                    var elapsedMs = 0L
-                    var lastPublish = 0L
-                    fun publish() {
-                        updateBus(index) { cur ->
-                            cur.copy(phase = BusPhase.Active, frameCount = frames, lastFrameId = lastId)
-                        }
-                        advanceElapsed(elapsedMs)
-                    }
-                    try {
-                        session.frames.collect { frame ->
-                            // Feed ISO-TP reassembly first (a non-blocking offer)
-                            // so the response — and the flow-control frame we owe
-                            // the ECU — never waits behind logging I/O.
-                            isoTp?.onFrame(frame)
-                            val rel = writerMutex.withLock { ascWriter.writeFrame(frame) }
-                            frames++
-                            lastId = "%X".format(frame.id) + if (frame.extended) "x" else ""
-                            elapsedMs = maxOf(elapsedMs, (rel * 1000.0).toLong())
-                            val now = System.currentTimeMillis()
-                            if (now - lastPublish >= UI_PUBLISH_MS) {
-                                publish()
-                                lastPublish = now
-                            }
-                        }
-                    } finally {
-                        pollerJob?.cancel()
-                        if (frames > 0) publish()
-                    }
-                    updateBus(index) { cur ->
-                        if (cur.phase == BusPhase.Errored) cur
-                        else cur.copy(phase = BusPhase.Disconnected)
-                    }
-                } finally {
-                    session.close()
-                }
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            updateBus(index) { cur ->
-                cur.copy(
-                    phase = BusPhase.Errored,
-                    errorMessage = e.message ?: e.javaClass.simpleName,
-                )
-            }
-        }
-    }
-
-    private fun updateBus(index: Int, mutator: (BusStatus) -> BusStatus) {
-        _state.update { cur ->
-            if (cur !is RecordUiState.Recording) return@update cur
-            if (index !in cur.buses.indices) return@update cur
-            val updated = cur.buses.toMutableList()
-            updated[index] = mutator(updated[index])
-            cur.copy(buses = updated)
-        }
-    }
-
-    private fun advanceElapsed(relMs: Long) {
-        _state.update { cur ->
-            if (cur !is RecordUiState.Recording) return@update cur
-            if (relMs <= cur.elapsedMs) cur else cur.copy(elapsedMs = relMs)
-        }
-    }
-
-    /**
-     * Stop the active capture and move to PendingSave so the user can name it.
-     */
-    fun stop() {
-        viewModelScope.launch {
-            captureJob?.cancelAndJoin()
-            captureJob = null
-            val cur = _state.value as? RecordUiState.Recording
-            val temp = tempFile
-            val w = writer
-            if (temp == null || w == null || cur == null) {
-                _state.value = RecordUiState.Idle
-                return@launch
-            }
-            runCatching { withContext(Dispatchers.IO) { w.close() } }
-            writer = null
-            _state.value = RecordUiState.PendingSave(
-                tempFile = temp,
-                durationMs = cur.elapsedMs,
-                frameCount = cur.frameCount,
-                createdAt = Instant.ofEpochMilli(cur.startedAtMs)
-            )
-        }
-    }
-
-    fun saveAs(name: String) {
-        val pending = _state.value as? RecordUiState.PendingSave ?: return
-        viewModelScope.launch {
-            withContext(Dispatchers.IO) {
-                captureRepo.finalizeCapture(
-                    tempFile = pending.tempFile,
-                    name = name,
-                    durationMs = pending.durationMs,
-                    frameCount = pending.frameCount,
-                    createdAt = pending.createdAt
-                )
-            }
-            tempFile = null
-            _state.value = RecordUiState.Idle
-        }
-    }
-
-    fun discardPending() {
-        val pending = _state.value as? RecordUiState.PendingSave ?: return
-        captureRepo.discardTemp(pending.tempFile)
-        tempFile = null
-        _state.value = RecordUiState.Idle
-    }
-
-    fun dismissError() {
-        if (_state.value is RecordUiState.Error) _state.value = RecordUiState.Idle
-    }
+    fun stop() = engine.stop()
+    fun saveAs(name: String) = engine.saveAs(name)
+    fun discardPending() = engine.discardPending()
+    fun dismissError() = engine.dismissError()
 
     companion object {
-        private const val UI_PUBLISH_MS = 100L
-
         val Factory: ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 val app = this[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY] as App
-                RecordViewModel(app, app.container.settingsRepository, app.container.captureRepository)
+                RecordViewModel(app, app.container.captureEngine)
             }
         }
     }
